@@ -14,7 +14,14 @@ const schema = z.object({
   RAZORPAY_WEBHOOK_SECRET: z.string().default(''),
   CLOUDINARY_CLOUD_NAME: z.string().default(''),
   CLOUDINARY_API_KEY: z.string().default(''),
-  CLOUDINARY_API_SECRET: z.string().default('')
+  CLOUDINARY_API_SECRET: z.string().default(''),
+  SMTP_HOST: z.string().default(''),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_SECURE: z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : false), z.boolean()).default(false),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASS: z.string().default(''),
+  SMTP_FROM: z.string().default(''),
+  BOOKING_ALERT_EMAIL: z.string().default('')
 });
 const parsed = schema.safeParse(process.env);
 if (!parsed.success) throw new Error(JSON.stringify(parsed.error.flatten()));

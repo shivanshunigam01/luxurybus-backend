@@ -5,9 +5,12 @@ import { Quote } from '../models/Quote.js';
 import { Booking } from '../models/Booking.js';
 import { Bus } from '../models/Bus.js';
 import { Setting } from '../models/Setting.js';
+import { User } from '../models/User.js';
+import { NotificationLog } from '../models/NotificationLog.js';
 import { ApiError } from '../utils/ApiError.js';
 import { formatInr, displayStatusFromRaw } from '../utils/formatters.js';
 import { uploadBufferToCloudinary, destroyFromCloudinary } from '../integrations/cloudinary.js';
+import { sendEmail } from '../integrations/mailer.js';
 
 const getVendorOrThrow = async (vendorId) => {
   const vendor = await Vendor.findById(vendorId);
@@ -17,6 +20,17 @@ const getVendorOrThrow = async (vendorId) => {
 
 const vendorCommissionAmount = (subtotal, pct) => (Number(subtotal) * Number(pct || 10)) / 100;
 const vendorNetAfterCommission = (subtotal, pct) => Number(subtotal) - vendorCommissionAmount(subtotal, pct);
+const logQuoteEmail = (recipientId, subject, body, status) =>
+  NotificationLog.create({
+    recipientType: 'customer',
+    recipientId: recipientId || null,
+    channel: 'email',
+    subject,
+    body,
+    audience: 'customer',
+    status,
+    message: subject,
+  });
 
 /** Open leads for this vendor (city match + not rejected + no accepted quote yet). */
 export const getVendorLeads = async (vendorId) => {
@@ -34,18 +48,32 @@ export const getVendorLeads = async (vendorId) => {
     .sort({ createdAt: -1 })
     .limit(100)
     .lean();
+  const leadIds = leads.map((l) => l._id);
+  const myQuotes = await Quote.find({ vendorId, leadId: { $in: leadIds } }).select('leadId status').lean();
+  const quoteByLeadId = new Map(myQuotes.map((q) => [String(q.leadId), q.status]));
   return {
-    leads: leads.map((l) => ({
-      id: String(l._id),
-      customer: l.guestName || 'Guest',
-      from: l.pickup,
-      to: l.drop,
-      date: new Date(l.journeyDate).toLocaleDateString('en-IN'),
-      passengers: l.passengers,
-      bus: l.busType,
-      purpose: l.purpose || '—',
-      status: 'Open',
-    })),
+    leads: leads.map((l) => {
+      const myStatus = quoteByLeadId.get(String(l._id));
+      const mappedStatus =
+        myStatus === 'accepted'
+          ? 'Accepted'
+          : myStatus === 'declined' || myStatus === 'withdrawn'
+            ? 'Rejected'
+            : myStatus === 'pending'
+              ? 'Quoted'
+              : 'Open';
+      return {
+        id: String(l._id),
+        customer: l.guestName || 'Guest',
+        from: l.pickup,
+        to: l.drop,
+        date: new Date(l.journeyDate).toLocaleDateString('en-IN'),
+        passengers: l.passengers,
+        bus: l.busType,
+        purpose: l.purpose || '—',
+        status: mappedStatus,
+      };
+    }),
   };
 };
 
@@ -76,8 +104,9 @@ export const createQuote = async (payload, vendorId) => {
   const lead = await Lead.findById(payload.leadId);
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (await Quote.findOne({ leadId: payload.leadId, vendorId })) throw new ApiError(409, 'Quote already submitted for this lead');
+  const vendor = await Vendor.findById(vendorId).lean();
   const responseMinutes = Math.floor((Date.now() - new Date(lead.createdAt).getTime()) / 60000);
-  return Quote.create({
+  const quote = await Quote.create({
     leadId: payload.leadId,
     vendorId,
     amount: payload.amount,
@@ -85,6 +114,53 @@ export const createQuote = async (payload, vendorId) => {
     terms: payload.terms || '',
     responseMinutes,
   });
+  const customerUser = lead.customerId ? await User.findById(lead.customerId).select('_id email').lean() : null;
+  const customerEmail = lead.guestEmail || customerUser?.email || '';
+  if (customerEmail) {
+    const subject = `New quotation from ${vendor?.companyName || 'a vendor'} for your booking request`;
+    const body =
+      `A vendor has shared a quotation for your booking request.\n\n` +
+      `Route: ${lead.pickup} -> ${lead.drop}\n` +
+      `Journey: ${lead.journeyDate} ${lead.journeyTime}\n` +
+      `Vendor: ${vendor?.companyName || 'Vendor'}\n` +
+      `Quoted Amount: ${formatInr(payload.amount)}\n` +
+      `Inclusions: ${payload.inclusions || 'Not specified'}\n` +
+      `Terms: ${payload.terms || 'Not specified'}\n\n` +
+      'Please login to your account and review this quotation.';
+    const html = `
+      <div style="font-family:Arial,Helvetica,sans-serif;background:#f3f7ff;padding:24px">
+        <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #d6e3ff;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(30,77,205,0.12)">
+          <div style="background:linear-gradient(120deg,#165dff,#3a8dff);color:#fff;padding:18px 22px">
+            <div style="font-size:20px;font-weight:700;letter-spacing:.2px">Luxury Bus Rental</div>
+            <div style="font-size:13px;opacity:.9;margin-top:4px">Quotation Received</div>
+          </div>
+          <div style="padding:20px 22px 8px 22px">
+            <div style="font-size:18px;font-weight:700;color:#13326c;margin-bottom:10px">A vendor shared your quotation</div>
+            <div style="border:2px dashed #9dbdff;border-radius:12px;padding:14px;background:#f8fbff">
+              <table style="width:100%;border-collapse:collapse;font-size:14px;color:#1e2a3a">
+                <tr><td style="padding:6px 0;font-weight:700;width:42%">Route</td><td style="padding:6px 0">${lead.pickup} -> ${lead.drop}</td></tr>
+                <tr><td style="padding:6px 0;font-weight:700">Journey Date</td><td style="padding:6px 0">${lead.journeyDate} ${lead.journeyTime}</td></tr>
+                <tr><td style="padding:6px 0;font-weight:700">Vendor</td><td style="padding:6px 0">${vendor?.companyName || 'Vendor'}</td></tr>
+                <tr><td style="padding:6px 0;font-weight:700">Quoted Amount</td><td style="padding:6px 0">${formatInr(payload.amount)}</td></tr>
+                <tr><td style="padding:6px 0;font-weight:700">Inclusions</td><td style="padding:6px 0">${payload.inclusions || 'Not specified'}</td></tr>
+                <tr><td style="padding:6px 0;font-weight:700">Terms</td><td style="padding:6px 0">${payload.terms || 'Not specified'}</td></tr>
+              </table>
+            </div>
+          </div>
+          <div style="padding:12px 22px 22px;color:#425466;font-size:13px">
+            Please login to your account to compare and accept the best quotation.
+          </div>
+        </div>
+      </div>
+    `;
+    try {
+      const result = await sendEmail({ to: customerEmail, subject, text: body, html });
+      await logQuoteEmail(customerUser?._id || null, subject, body, result.sent ? 'sent' : 'failed');
+    } catch {
+      await logQuoteEmail(customerUser?._id || null, subject, body, 'failed');
+    }
+  }
+  return quote;
 };
 
 export const getDashboardStats = async (vendorId) => {

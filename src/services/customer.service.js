@@ -45,33 +45,60 @@ export const getDashboardStats = async (userId) => {
 export const getBookings = async (userId) => {
   const settings = await Setting.findOne().sort({ createdAt: -1 }).lean();
   const gstRatePercent = settings?.gstPercentage ?? 18;
-  const rows = await Booking.find({ customerId: userId }).sort({ createdAt: -1 }).populate('leadId').populate('vendorId', 'companyName').lean();
+  const [rows, pendingLeads] = await Promise.all([
+    Booking.find({ customerId: userId }).sort({ createdAt: -1 }).populate('leadId').populate('vendorId', 'companyName').lean(),
+    Lead.find({ customerId: userId, acceptedQuoteId: null }).sort({ createdAt: -1 }).lean(),
+  ]);
+  const bookingRows = rows.map((b) => {
+    const lead = b.leadId || {};
+    const vendor = b.vendorId || {};
+    const bal = Math.max(0, Number(b.totalWithGst) - Number(b.amountPaid || 0));
+    return {
+      id: String(b._id),
+      from: lead.pickup || '',
+      to: lead.drop || '',
+      date: lead.journeyDate ? new Date(lead.journeyDate).toLocaleDateString('en-IN') : '—',
+      bus: lead.busType || '—',
+      vendor: vendor.companyName || 'Vendor',
+      status: b.displayStatus || displayStatusFromRaw(b.rawStatus),
+      rawStatus: b.rawStatus,
+      amount: formatInr(b.totalWithGst),
+      subtotal: formatInr(b.subtotal),
+      gstAmount: formatInr(b.gstAmount),
+      totalWithGst: formatInr(b.totalWithGst),
+      paymentType: b.paymentType,
+      advanceRequired: formatInr(b.advanceRequired),
+      amountPaid: formatInr(b.amountPaid),
+      balanceDue: formatInr(bal),
+      paymentStatus: paymentLabelFromBooking(b),
+      gstRatePercent,
+      createdAt: b.createdAt ? new Date(b.createdAt).toISOString() : '',
+    };
+  });
+  const pendingRows = pendingLeads.map((lead) => ({
+    id: String(lead._id),
+    from: lead.pickup || '',
+    to: lead.drop || '',
+    date: lead.journeyDate ? new Date(lead.journeyDate).toLocaleDateString('en-IN') : '—',
+    bus: lead.busType || '—',
+    vendor: 'Awaiting vendor quotes',
+    status: 'Awaiting Quotes',
+    rawStatus: 'awaiting_quotes',
+    amount: '—',
+    subtotal: '—',
+    gstAmount: '—',
+    totalWithGst: '—',
+    paymentType: '—',
+    advanceRequired: '—',
+    amountPaid: '—',
+    balanceDue: '—',
+    paymentStatus: 'Pending Quotes',
+    gstRatePercent,
+    createdAt: lead.createdAt ? new Date(lead.createdAt).toISOString() : '',
+  }));
+  const merged = [...bookingRows, ...pendingRows].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   return {
-    bookings: rows.map((b) => {
-      const lead = b.leadId || {};
-      const vendor = b.vendorId || {};
-      const bal = Math.max(0, Number(b.totalWithGst) - Number(b.amountPaid || 0));
-      return {
-        id: String(b._id),
-        from: lead.pickup || '',
-        to: lead.drop || '',
-        date: lead.journeyDate ? new Date(lead.journeyDate).toLocaleDateString('en-IN') : '—',
-        bus: lead.busType || '—',
-        vendor: vendor.companyName || 'Vendor',
-        status: b.displayStatus || displayStatusFromRaw(b.rawStatus),
-        rawStatus: b.rawStatus,
-        amount: formatInr(b.totalWithGst),
-        subtotal: formatInr(b.subtotal),
-        gstAmount: formatInr(b.gstAmount),
-        totalWithGst: formatInr(b.totalWithGst),
-        paymentType: b.paymentType,
-        advanceRequired: formatInr(b.advanceRequired),
-        amountPaid: formatInr(b.amountPaid),
-        balanceDue: formatInr(bal),
-        paymentStatus: paymentLabelFromBooking(b),
-        gstRatePercent,
-      };
-    }),
+    bookings: merged.map(({ createdAt, ...row }) => row),
   };
 };
 
