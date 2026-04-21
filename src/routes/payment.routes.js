@@ -1,0 +1,10 @@
+import { Router } from 'express';
+import * as PaymentController from '../controllers/payment.controller.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { createOrderSchema, verifyPaymentSchema } from '../validators/payment.validators.js';
+const router = Router();
+router.post('/razorpay/order', requireAuth, requireRole('customer'), validate(createOrderSchema), PaymentController.createRazorpayOrder);
+router.post('/razorpay/verify', requireAuth, requireRole('customer'), validate(verifyPaymentSchema), PaymentController.verifyRazorpayPayment);
+router.post('/razorpay/webhook', PaymentController.razorpayWebhook);
+export default router;
