@@ -4,7 +4,7 @@ import { User } from '../src/models/User.js';
 import { hashPassword } from '../src/utils/password.js';
 dotenv.config();
 connectDB().then(async () => {
-  const email = process.env.ADMIN_EMAIL || 'admin@luxurybusrental.in';
+  const email = process.env.ADMIN_EMAIL || 'kartartravelsltd@gmail.com';
   const password = process.env.ADMIN_PASSWORD || 'Admin@123456';
   if (await User.findOne({ email })) return console.log('Admin already exists:', email);
   await User.create({ email, passwordHash: await hashPassword(password), name: 'System Admin', role: 'admin' });
