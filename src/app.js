@@ -14,7 +14,17 @@ import paymentRoutes from './routes/payment.routes.js';
 
 const app = express();
 app.use(helmet());
-app.use(cors({ origin: env.CLIENT_ORIGIN.split(',').map((v) => v.trim()), credentials: true }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow all browser and non-browser clients (no Origin header).
+      if (!origin) return callback(null, true);
+      return callback(null, true);
+    },
+    credentials: true
+  })
+);
+app.options('*', cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
