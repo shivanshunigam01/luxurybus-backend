@@ -13,18 +13,18 @@ import adminRoutes from './routes/admin.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 
 const app = express();
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow all browser and non-browser clients (no Origin header).
+    if (!origin) return callback(null, true);
+    return callback(null, true);
+  },
+  credentials: true
+};
+
 app.use(helmet());
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow all browser and non-browser clients (no Origin header).
-      if (!origin) return callback(null, true);
-      return callback(null, true);
-    },
-    credentials: true
-  })
-);
-app.options('*', cors());
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
