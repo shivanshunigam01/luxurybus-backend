@@ -45,45 +45,206 @@ export const getStats = async () => {
   };
 };
 
-export const listBookings = async () => {
+export const listBookings = async (query = {}) => {
   const settings = await Setting.findOne().sort({ createdAt: -1 }).lean();
   const commissionPct = settings?.vendorCommissionPercentage ?? 10;
-  const rows = await Booking.find().sort({ createdAt: -1 }).populate('leadId').populate('vendorId', 'companyName').populate('customerId', 'name').lean();
+  const filter = {};
+  if (query.status) filter.rawStatus = query.status;
+  if (query.paymentStatus === 'unpaid') filter.amountPaid = { $lte: 0 };
+  if (query.vendorId) filter.vendorId = query.vendorId;
+  if (query.customerId) filter.customerId = query.customerId;
+  if (query.companyId) filter.companyId = query.companyId;
+  if (query.from || query.to) {
+    filter.createdAt = {};
+    if (query.from) filter.createdAt.$gte = new Date(query.from);
+    if (query.to) filter.createdAt.$lte = new Date(query.to);
+  }
+  if (query.q) {
+    const q = String(query.q).trim();
+    filter.$or = [
+      { searchText: new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') },
+      ...(q.match(/^[a-f0-9]{24}$/i) ? [{ _id: q }] : []),
+    ];
+  }
+  const page = Math.max(1, Number(query.page || 1));
+  const limit = Math.min(100, Math.max(1, Number(query.limit || 50)));
+  const skip = (page - 1) * limit;
+  const [rows, total] = await Promise.all([
+    Booking.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('leadId')
+      .populate('vendorId', 'companyName')
+      .populate('customerId', 'name email phone')
+      .populate('companyId', 'companyName')
+      .lean(),
+    Booking.countDocuments(filter),
+  ]);
+  let mapped = rows.map((b) => {
+    const lead = b.leadId || {};
+    const vendor = b.vendorId || {};
+    const customer = b.customerId;
+    const payStatus = paymentLabel(b);
+    return {
+      id: String(b._id),
+      customer: (typeof customer === 'object' && customer?.name) || lead.guestName || 'Guest',
+      customerEmail: (typeof customer === 'object' && customer?.email) || lead.guestEmail || '',
+      customerPhone: (typeof customer === 'object' && customer?.phone) || lead.guestPhone || '',
+      vendor: vendor.companyName || 'Vendor',
+      vendorId: vendor._id ? String(vendor._id) : undefined,
+      company: b.companyId?.companyName || null,
+      companyId: b.companyId?._id ? String(b.companyId._id) : b.companyId ? String(b.companyId) : null,
+      vehicle: lead.busType || '',
+      route: `${lead.pickup || ''} → ${lead.drop || ''}`,
+      amount: formatInr(b.totalWithGst),
+      subtotal: formatInr(b.subtotal),
+      gstAmount: formatInr(b.gstAmount),
+      totalWithGst: formatInr(b.totalWithGst),
+      paymentType: b.paymentType,
+      paymentStatus: payStatus,
+      status: b.rawStatus,
+      date: b.createdAt ? new Date(b.createdAt).toLocaleDateString('en-IN') : '—',
+      payoutStatus: b.payoutStatus === 'paid' ? 'Paid' : b.payoutStatus === 'held' ? 'On hold' : b.payoutStatus,
+      commissionDeducted: formatInr(b.commissionDeducted || vendorCommissionAmount(b.subtotal, commissionPct)),
+      vendorPayout: formatInr(b.payoutAmount || vendorNetAfterCommission(b.subtotal, commissionPct)),
+    };
+  });
+  if (query.paymentStatus === 'paid') mapped = mapped.filter((b) => b.paymentStatus === 'Paid in full');
+  if (query.paymentStatus === 'partial') mapped = mapped.filter((b) => b.paymentStatus === 'Partial');
+  return { total, page, limit, bookings: mapped };
+};
+
+export const getBookingDetail = async (id) => {
+  const booking = await Booking.findById(id)
+    .populate('leadId')
+    .populate('quoteId')
+    .populate('customerId', 'name email phone role')
+    .populate('vendorId')
+    .populate('companyId')
+    .populate('assignedBusId')
+    .lean();
+  if (!booking) throw new ApiError(404, 'Booking not found');
+  const { BookingEvent } = await import('../models/BookingEvent.js');
+  const { Payment } = await import('../models/Payment.js');
+  const { VendorPayout } = await import('../models/VendorPayout.js');
+  const { Invoice } = await import('../models/Invoice.js');
+  const [events, payments, payouts, invoice] = await Promise.all([
+    BookingEvent.find({ bookingId: id }).sort({ createdAt: 1 }).lean(),
+    Payment.find({ bookingId: id }).sort({ createdAt: -1 }).lean(),
+    VendorPayout.find({ bookingIds: id }).sort({ createdAt: -1 }).lean(),
+    Invoice.findOne({ bookingId: id }).lean(),
+  ]);
+  const lead = booking.leadId || {};
+  const vendor = booking.vendorId || {};
+  const customer = booking.customerId || {};
+  const company = booking.companyId || null;
+  const bus = booking.assignedBusId || null;
   return {
-    bookings: rows.map((b) => {
-      const lead = b.leadId || {};
-      const vendor = b.vendorId || {};
-      const customer = b.customerId;
-      return {
-        id: String(b._id),
-        customer: (typeof customer === 'object' && customer?.name) || lead.guestName || 'Guest',
-        vendor: vendor.companyName || 'Vendor',
-        route: `${lead.pickup || ''} → ${lead.drop || ''}`,
-        amount: formatInr(b.totalWithGst),
-        subtotal: formatInr(b.subtotal),
-        gstAmount: formatInr(b.gstAmount),
-        totalWithGst: formatInr(b.totalWithGst),
-        paymentType: b.paymentType,
-        paymentStatus: paymentLabel(b),
-        status: b.rawStatus,
-        date: b.createdAt ? new Date(b.createdAt).toLocaleDateString('en-IN') : '—',
-        payoutStatus: b.payoutStatus === 'paid' ? 'Paid' : b.payoutStatus === 'held' ? 'On hold' : b.payoutStatus,
-        commissionDeducted: formatInr(b.commissionDeducted || vendorCommissionAmount(b.subtotal, commissionPct)),
-        vendorPayout: formatInr(b.payoutAmount || vendorNetAfterCommission(b.subtotal, commissionPct)),
-      };
-    }),
+    booking: {
+      id: String(booking._id),
+      rawStatus: booking.rawStatus,
+      displayStatus: booking.displayStatus || displayStatusFromRaw(booking.rawStatus),
+      paymentStatus: paymentLabel(booking),
+      paymentType: booking.paymentType,
+      subtotal: booking.subtotal,
+      gstAmount: booking.gstAmount,
+      totalWithGst: booking.totalWithGst,
+      amountPaid: booking.amountPaid,
+      advanceRequired: booking.advanceRequired,
+      payoutStatus: booking.payoutStatus,
+      payoutAmount: booking.payoutAmount,
+      commissionDeducted: booking.commissionDeducted,
+      couponCode: booking.couponCode,
+      discountAmount: booking.discountAmount,
+      driver: booking.driver || {},
+      createdAt: booking.createdAt,
+    },
+    lead,
+    quote: booking.quoteId || null,
+    customer: customer._id
+      ? { id: String(customer._id), name: customer.name, email: customer.email, phone: customer.phone, role: customer.role }
+      : null,
+    vendor: vendor._id
+      ? {
+          id: String(vendor._id),
+          companyName: vendor.companyName,
+          phone: vendor.phone,
+          email: vendor.email,
+          city: vendor.city,
+        }
+      : null,
+    company: company
+      ? { id: String(company._id), companyName: company.companyName, gstin: company.gstin, email: company.email }
+      : null,
+    bus: bus
+      ? { id: String(bus._id), name: bus.name, registrationNumber: bus.registrationNumber, type: bus.type }
+      : null,
+    payments: payments.map((p) => ({
+      id: String(p._id),
+      amount: p.amountPaise / 100,
+      status: p.status,
+      purpose: p.purpose,
+      razorpayPaymentId: p.razorpayPaymentId,
+      createdAt: p.createdAt,
+    })),
+    events: events.map((e) => ({
+      id: String(e._id),
+      type: e.type,
+      message: e.message,
+      meta: e.meta,
+      createdAt: e.createdAt,
+    })),
+    payouts: payouts.map((p) => ({
+      id: String(p._id),
+      status: p.status,
+      amountRequested: p.amountRequested,
+      amountApproved: p.amountApproved,
+      transactionId: p.transactionId,
+    })),
+    invoice: invoice
+      ? { id: String(invoice._id), number: invoice.number, status: invoice.status, total: invoice.total }
+      : null,
   };
 };
 
-export const updateBooking = async (id, payload) => {
-  const status = payload.status;
-  if (!status) throw new ApiError(400, 'status required');
+export const updateBooking = async (id, payload, adminUserId = null) => {
   const booking = await Booking.findById(id);
   if (!booking) throw new ApiError(404, 'Booking not found');
-  booking.rawStatus = status;
-  booking.displayStatus = displayStatusFromRaw(status);
-  if (status === 'completed' && !booking.payoutOverride) booking.payoutStatus = 'ready';
-  await booking.save();
+  const { applyBookingStatusChange, appendBookingEvent, rebuildBookingSearchText } = await import(
+    './bookingLifecycle.service.js'
+  );
+  if (payload.status) {
+    await applyBookingStatusChange(booking, payload.status, { userId: adminUserId });
+  }
+  if (payload.driver) {
+    booking.driver = {
+      name: payload.driver.name ?? booking.driver?.name ?? '',
+      phone: payload.driver.phone ?? booking.driver?.phone ?? '',
+      license: payload.driver.license ?? booking.driver?.license ?? '',
+    };
+    await booking.save();
+    await appendBookingEvent({
+      bookingId: booking._id,
+      type: 'driver',
+      message: `Driver updated: ${booking.driver.name || '—'} (${booking.driver.phone || '—'})`,
+      meta: booking.driver,
+      createdBy: adminUserId,
+    });
+    await rebuildBookingSearchText(booking._id);
+  }
+  if (payload.assignedBusId) {
+    booking.assignedBusId = payload.assignedBusId;
+    await booking.save();
+    await appendBookingEvent({
+      bookingId: booking._id,
+      type: 'assignment',
+      message: `Bus assigned: ${payload.assignedBusId}`,
+      meta: { assignedBusId: payload.assignedBusId },
+      createdBy: adminUserId,
+    });
+    await rebuildBookingSearchText(booking._id);
+  }
   return { ok: true };
 };
 
@@ -102,27 +263,60 @@ export const payoutOverride = async (id, body) => {
 };
 
 export const listVendors = async () => {
-  const vendors = await Vendor.find().sort({ createdAt: -1 }).populate('userId', 'name').lean();
+  const vendors = await Vendor.find().sort({ createdAt: -1 }).populate('userId', 'name email phone').lean();
+  const busCounts = await Bus.aggregate([{ $group: { _id: '$vendorId', n: { $sum: 1 }, pending: { $sum: { $cond: [{ $eq: ['$approvalStatus', 'pending'] }, 1, 0] } } } }]);
+  const busMap = Object.fromEntries(busCounts.map((b) => [String(b._id), b]));
   return {
-    vendors: vendors.map((v) => ({
-      id: String(v._id),
-      name: v.companyName,
-      owner: v.userId?.name || '—',
-      city: v.city || '—',
-      buses: v.fleetSize || 0,
-      kyc: v.status === 'active' ? 'Approved' : v.status === 'pending' ? 'Pending' : 'Rejected',
-      status: v.status === 'active' ? 'Active' : v.status === 'blocked' ? 'Blocked' : v.status === 'rejected' ? 'Rejected' : 'Pending',
-      rawStatus: v.status,
-    })),
+    vendors: vendors.map((v) => {
+      const bc = busMap[String(v._id)] || { n: 0, pending: 0 };
+      const statusLabel =
+        v.status === 'active'
+          ? 'Active'
+          : v.status === 'blocked'
+            ? 'Blocked'
+            : v.status === 'suspended'
+              ? 'Suspended'
+              : v.status === 'rejected'
+                ? 'Rejected'
+                : 'Pending';
+      return {
+        id: String(v._id),
+        name: v.companyName,
+        owner: v.ownerName || v.userId?.name || '—',
+        email: v.userId?.email || '',
+        phone: v.userId?.phone || '',
+        city: v.city || '—',
+        state: v.state || '',
+        businessType: v.businessType || '',
+        buses: bc.n || v.fleetSize || 0,
+        pendingFleet: bc.pending || 0,
+        documentsStatus: v.documentsStatus || 'incomplete',
+        walletBalance: v.walletBalance || 0,
+        registrationStep: v.registrationStep || 1,
+        kyc:
+          v.status === 'active'
+            ? 'Approved'
+            : v.status === 'pending'
+              ? 'Pending'
+              : v.status === 'suspended'
+                ? 'Suspended'
+                : 'Rejected',
+        status: statusLabel,
+        rawStatus: v.status,
+        createdAt: v.createdAt,
+      };
+    }),
   };
 };
 
-export const updateVendor = async (id, payload) => {
-  const vendor = await Vendor.findById(id);
-  if (!vendor) throw new ApiError(404, 'Vendor not found');
-  if (payload.status) vendor.status = payload.status;
-  await vendor.save();
-  return { ok: true };
+export const updateVendor = async (id, payload, adminUser) => {
+  const Portal = await import('./vendorPortal.service.js');
+  return Portal.adminUpdateVendorStatus(id, payload, adminUser);
+};
+
+export const getVendorDetail = async (id) => {
+  const Portal = await import('./vendorPortal.service.js');
+  return Portal.adminGetVendorDetail(id);
 };
 
 export const listUsers = async () => {
@@ -288,14 +482,61 @@ export const listNotificationLogs = async () => {
 };
 
 export const sendNotification = async (payload) => {
+  const subject = payload.subject || '';
+  const body = payload.body || '';
+  const audience = payload.audience || 'all';
+  const { notifyChannels } = await import('./notify.service.js');
+  const { sendEmail } = await import('../integrations/mailer.js');
+
+  let recipients = [];
+  if (audience === 'customers' || audience === 'all') {
+    recipients = recipients.concat(await User.find({ role: 'customer', blocked: { $ne: true } }).select('email phone _id').lean());
+  }
+  if (audience === 'vendors' || audience === 'all') {
+    const vendorUsers = await User.find({ role: 'vendor', blocked: { $ne: true } }).select('email phone _id').lean();
+    recipients = recipients.concat(vendorUsers);
+  }
+  if (audience === 'b2b') {
+    recipients = recipients.concat(await User.find({ role: 'b2b', blocked: { $ne: true } }).select('email phone _id').lean());
+  }
+  if (payload.to) {
+    recipients = [{ email: payload.to, phone: payload.phone || '', _id: payload.userId || null }];
+  }
+
+  let sent = 0;
+  for (const r of recipients.slice(0, 500)) {
+    if (!r.email) continue;
+    const result = await sendEmail({ to: r.email, subject, text: body });
+    if (result.sent) sent += 1;
+    if (r._id) {
+      await notifyChannels({
+        userId: r._id,
+        email: '',
+        subject,
+        body,
+        channels: ['inapp'],
+        type: 'system',
+      });
+    }
+  }
+
   const log = await NotificationLog.create({
-    channel: payload.channel || 'email',
-    subject: payload.subject || '',
-    body: payload.body || '',
-    audience: payload.audience || '',
-    message: payload.body || payload.subject || '',
+    channel: 'email',
+    subject,
+    body,
+    audience,
+    message: body || subject,
+    status: sent > 0 ? 'sent' : 'queued',
   });
-  return { ok: true, id: String(log._id) };
+  const { writeAudit } = await import('./audit.service.js');
+  await writeAudit({
+    action: 'notification.send',
+    entityType: 'NotificationLog',
+    entityId: String(log._id),
+    message: `Broadcast email to ${audience} (${sent} delivered)`,
+    meta: { sent, audience, channel: 'email' },
+  });
+  return { ok: true, id: String(log._id), sent };
 };
 
 export const listQuotes = async () => {

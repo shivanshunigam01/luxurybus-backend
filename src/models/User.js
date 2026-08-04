@@ -4,8 +4,9 @@ const schema = new mongoose.Schema({
   passwordHash: { type: String, default: null },
   name: { type: String, required: true, trim: true },
   phone: { type: String, default: '' },
-  role: { type: String, enum: ['customer', 'vendor', 'admin'], default: 'customer' },
+  role: { type: String, enum: ['customer', 'vendor', 'admin', 'b2b'], default: 'customer' },
   vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor', default: null },
+  companyId: { type: mongoose.Schema.Types.ObjectId, ref: 'B2BCompany', default: null },
   googleId: { type: String, sparse: true, index: true },
   blocked: { type: Boolean, default: false }
 }, { timestamps: true });

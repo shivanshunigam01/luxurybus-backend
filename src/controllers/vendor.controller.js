@@ -13,6 +13,21 @@ export const updateBus = asyncHandler(async (req, res) => res.json(await VendorS
 export const deleteBus = asyncHandler(async (req, res) => res.json(await VendorService.deleteBus(req.params.id, req.user.vendorId)));
 export const getBookings = asyncHandler(async (req, res) => res.json(await VendorService.getBookings(req.user.vendorId)));
 export const updateBookingStatus = asyncHandler(async (req, res) =>
-  res.json(await VendorService.updateBookingStatus(req.params.id, req.user.vendorId, req.validated.body.status)),
+  res.json(
+    await VendorService.updateBookingStatus(
+      req.params.id,
+      req.user.vendorId,
+      req.validated.body.status,
+      req.user.sub,
+    ),
+  ),
 );
+export const requestPayout = asyncHandler(async (req, res) => {
+  const Payout = await import('../services/payout.service.js');
+  res.status(201).json(await Payout.vendorRequestPayout(req.user.vendorId, req.body));
+});
+export const listPayouts = asyncHandler(async (req, res) => {
+  const Payout = await import('../services/payout.service.js');
+  res.json(await Payout.vendorListPayouts(req.user.vendorId));
+});
 export const getEarnings = asyncHandler(async (req, res) => res.json(await VendorService.getEarnings(req.user.vendorId)));

@@ -14,6 +14,9 @@ const schema = new mongoose.Schema(
     quoteWindowHours: { type: Number, default: 24 },
     payoutMode: { type: String, enum: ['manual', 'automatic'], default: 'automatic' },
     payoutTrigger: { type: String, default: 'completion' },
+    b2bDefaultDiscountPercent: { type: Number, default: 5 },
+    invoicePrefix: { type: String, default: 'LBR-INV' },
+    invoiceCounter: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

@@ -22,11 +22,33 @@ export const verifyRazorpayPayment = async ({ razorpay_order_id, razorpay_paymen
   payment.raw = { ...(payment.raw || {}), verifiedAt: new Date().toISOString(), razorpay_payment_id };
   await payment.save();
   booking.amountPaid += payment.amountPaise / 100;
+  const prev = booking.rawStatus;
   if (booking.amountPaid >= booking.advanceRequired && booking.rawStatus === 'pending_payment') {
     booking.rawStatus = 'confirmed';
   }
   booking.displayStatus = displayStatusFromRaw(booking.rawStatus);
   await booking.save();
+  const { appendBookingEvent, ensureInvoiceForBooking, rebuildBookingSearchText } = await import(
+    './bookingLifecycle.service.js'
+  );
+  await appendBookingEvent({
+    bookingId: booking._id,
+    type: 'payment',
+    message: `Payment of ₹${(payment.amountPaise / 100).toFixed(0)} received (${payment.purpose})`,
+    meta: { amount: payment.amountPaise / 100, purpose: payment.purpose, paymentId: String(payment._id) },
+    createdBy: userId,
+  });
+  if (prev !== booking.rawStatus) {
+    await appendBookingEvent({
+      bookingId: booking._id,
+      type: 'status',
+      message: `Status changed from ${prev} to ${booking.rawStatus}`,
+      meta: { from: prev, to: booking.rawStatus },
+      createdBy: userId,
+    });
+    await ensureInvoiceForBooking(booking._id);
+  }
+  await rebuildBookingSearchText(booking._id);
   return { ok: true, bookingId: String(booking._id) };
 };
 export const handleWebhook = async (body, signature) => { const digest = crypto.createHmac('sha256', env.RAZORPAY_WEBHOOK_SECRET).update(JSON.stringify(body)).digest('hex'); if (digest !== signature) throw new ApiError(400, 'Invalid webhook signature'); const event = body.event; const entity = body.payload?.payment?.entity; if (event === 'payment.captured' && entity?.order_id) { const payment = await Payment.findOne({ razorpayOrderId: entity.order_id }); if (payment && payment.status !== 'paid') { payment.status = 'paid'; payment.razorpayPaymentId = entity.id; payment.raw = body; await payment.save(); const booking = await Booking.findById(payment.bookingId); if (booking) { booking.amountPaid += payment.amountPaise / 100; if (booking.amountPaid >= booking.advanceRequired && booking.rawStatus === 'pending_payment') { booking.rawStatus = 'confirmed'; } booking.displayStatus = displayStatusFromRaw(booking.rawStatus); await booking.save(); } } } if (event === 'refund.processed' && entity?.order_id) { const payment = await Payment.findOne({ razorpayOrderId: entity.order_id }); if (payment) { payment.status = 'refunded'; payment.raw = body; await payment.save(); } } return { ok: true }; };

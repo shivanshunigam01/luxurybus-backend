@@ -217,7 +217,8 @@ export const updateProfile = async (vendorId, payload, file) => {
 export const listBuses = async (vendorId) => Bus.find({ vendorId }).sort({ createdAt: -1 });
 
 export const createBus = async (vendorId, payload, file) => {
-  const data = { ...payload, vendorId };
+  const { normalizeBusPayload } = await import('./content.service.js');
+  const data = { ...(await normalizeBusPayload(payload)), vendorId };
   if (file) {
     const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/buses');
     data.imagePublicId = up.public_id;
@@ -227,9 +228,20 @@ export const createBus = async (vendorId, payload, file) => {
 };
 
 export const updateBus = async (busId, vendorId, payload, file) => {
+  const { normalizeBusPayload } = await import('./content.service.js');
   const bus = await Bus.findOne({ _id: busId, vendorId });
   if (!bus) throw new ApiError(404, 'Bus not found');
-  Object.assign(bus, payload);
+  const normalized = await normalizeBusPayload({
+    busType: payload.busType ?? bus.busType,
+    vehicleTypeSlug: payload.vehicleTypeSlug ?? bus.vehicleTypeSlug,
+    seats: payload.seats ?? bus.seats,
+    ac: payload.ac ?? bus.ac,
+    pricingPerKm: payload.pricingPerKm ?? bus.pricingPerKm,
+    pricingPerDay: payload.pricingPerDay ?? bus.pricingPerDay,
+    availability: payload.availability ?? bus.availability,
+    registrationNumber: payload.registrationNumber ?? bus.registrationNumber,
+  });
+  Object.assign(bus, { ...payload, ...normalized });
   if (file) {
     if (bus.imagePublicId) await destroyFromCloudinary(bus.imagePublicId).catch(() => null);
     const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/buses');
@@ -276,13 +288,11 @@ export const getBookings = async (vendorId) => {
   };
 };
 
-export const updateBookingStatus = async (bookingId, vendorId, rawStatus) => {
+export const updateBookingStatus = async (bookingId, vendorId, rawStatus, userId = null) => {
   const booking = await Booking.findOne({ _id: bookingId, vendorId });
   if (!booking) throw new ApiError(404, 'Booking not found');
-  booking.rawStatus = rawStatus;
-  booking.displayStatus = displayStatusFromRaw(rawStatus);
-  if (rawStatus === 'completed' && !booking.payoutOverride) booking.payoutStatus = 'ready';
-  await booking.save();
+  const { applyBookingStatusChange } = await import('./bookingLifecycle.service.js');
+  await applyBookingStatusChange(booking, rawStatus, { userId });
   return { ok: true };
 };
 

@@ -21,7 +21,10 @@ const schema = z.object({
   SMTP_USER: z.string().default(''),
   SMTP_PASS: z.string().default(''),
   SMTP_FROM: z.string().default(''),
-  BOOKING_ALERT_EMAIL: z.string().default('')
+  BOOKING_ALERT_EMAIL: z.string().default(''),
+  FARE_BASE_INR: z.coerce.number().default(1500),
+  FARE_PER_KM_INR: z.coerce.number().default(35),
+  FARE_PER_DAY_INR: z.coerce.number().default(8000),
 });
 const parsed = schema.safeParse(process.env);
 if (!parsed.success) throw new Error(JSON.stringify(parsed.error.flatten()));

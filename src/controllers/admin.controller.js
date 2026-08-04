@@ -1,17 +1,49 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import * as AdminService from '../services/admin.service.js';
 export const getStats = asyncHandler(async (_req, res) => res.json(await AdminService.getStats()));
-export const getBookings = asyncHandler(async (_req, res) => res.json(await AdminService.listBookings()));
+export const getBookings = asyncHandler(async (req, res) => res.json(await AdminService.listBookings(req.query)));
+export const getBookingDetail = asyncHandler(async (req, res) =>
+  res.json(await AdminService.getBookingDetail(req.params.id)),
+);
 export const updateBooking = asyncHandler(async (req, res) =>
-  res.json(await AdminService.updateBooking(req.validated.params.id, req.validated.body)),
+  res.json(await AdminService.updateBooking(req.validated.params.id, req.validated.body, req.user?.sub)),
 );
 export const payoutOverride = asyncHandler(async (req, res) =>
   res.json(await AdminService.payoutOverride(req.validated.params.id, req.validated.body)),
 );
 export const getVendors = asyncHandler(async (_req, res) => res.json(await AdminService.listVendors()));
-export const updateVendor = asyncHandler(async (req, res) =>
-  res.json(await AdminService.updateVendor(req.validated.params.id, req.validated.body)),
+export const getVendorDetail = asyncHandler(async (req, res) =>
+  res.json(await AdminService.getVendorDetail(req.params.id)),
 );
+export const updateVendor = asyncHandler(async (req, res) =>
+  res.json(await AdminService.updateVendor(req.validated?.params?.id || req.params.id, req.validated?.body || req.body, req.user)),
+);
+export const reviewVendorDoc = asyncHandler(async (req, res) => {
+  const Portal = await import('../services/vendorPortal.service.js');
+  res.json(
+    await Portal.adminReviewDocument(
+      req.params.id,
+      req.params.docKey,
+      req.validated?.body || req.body,
+      req.user,
+    ),
+  );
+});
+export const reviewFleet = asyncHandler(async (req, res) => {
+  const Portal = await import('../services/vendorPortal.service.js');
+  res.json(await Portal.adminReviewFleet(req.params.id, req.validated?.body || req.body));
+});
+export const vendorWalletAdjust = asyncHandler(async (req, res) => {
+  const Portal = await import('../services/vendorPortal.service.js');
+  res.json(
+    await Portal.adminWalletAdjust(req.params.id, req.validated?.body || req.body, req.user),
+  );
+});
+export const vendorRemark = asyncHandler(async (req, res) => {
+  const Portal = await import('../services/vendorPortal.service.js');
+  res.json(await Portal.adminAddRemark(req.params.id, req.body.text || req.body.remark, req.user));
+});
+
 export const getUsers = asyncHandler(async (_req, res) => res.json(await AdminService.listUsers()));
 export const updateUser = asyncHandler(async (req, res) =>
   res.json(await AdminService.updateUser(req.validated.params.id, req.validated.body)),

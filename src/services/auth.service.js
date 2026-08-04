@@ -31,40 +31,77 @@ export const loginUser = async ({ email, password }) => {
   }
   assertAllowed(user);
   return {
-    token: signAccessToken({ sub: String(user._id), role: user.role, vendorId: user.vendorId ? String(user.vendorId) : null }),
+    token: signAccessToken({
+      sub: String(user._id),
+      role: user.role,
+      vendorId: user.vendorId ? String(user.vendorId) : null,
+      companyId: user.companyId ? String(user.companyId) : null,
+    }),
     user: toPublicUser(user),
   };
 };
 
+export const registerB2B = async (payload) => {
+  const B2B = await import('./b2b.service.js');
+  return B2B.registerB2B(payload);
+};
+
 export const registerVendor = async (p) => {
+  const { assertOtpVerified } = await import('./otp.service.js');
+  const otpChannel = 'email';
+  const otpTarget = p.email;
+  await assertOtpVerified({ channel: otpChannel, target: otpTarget, purpose: 'vendor_register' });
+
   if (await User.findOne({ email: p.email.toLowerCase() })) throw new ApiError(409, 'Email already registered');
+  const phoneDigits = String(p.phone || '').replace(/\D/g, '').slice(-10);
+  if (phoneDigits.length === 10) {
+    const phoneTaken = await User.findOne({ phone: new RegExp(`${phoneDigits}$`) });
+    if (phoneTaken) throw new ApiError(409, 'Phone already registered');
+  }
+
   const user = await User.create({
     email: p.email.toLowerCase(),
     passwordHash: await hashPassword(p.password),
-    name: p.name,
-    phone: p.phone || '',
+    name: p.ownerName || p.name,
+    phone: phoneDigits || p.phone || '',
     role: 'vendor',
   });
   const vendor = await Vendor.create({
     userId: user._id,
     companyName: p.companyName,
+    ownerName: p.ownerName || p.name || '',
+    businessType: p.businessType || '',
     gstNumber: p.gstNumber || '',
     panNumber: p.panNumber || '',
     address: p.address || '',
     fleetSize: p.fleetSize || 0,
     operatingCities: p.operatingCities || '',
     city: p.city || '',
+    state: p.state || '',
+    pin: p.pin || '',
     bankHolder: p.bankHolder || '',
     bankAccount: p.bankAccount || '',
     bankIfsc: p.bankIfsc || '',
     bankName: p.bankName || '',
+    emailVerified: true,
+    phoneVerified: false,
+    registrationStep: 1,
     status: 'pending',
   });
   user.vendorId = vendor._id;
   await user.save();
+
+  const { notifyVendor } = await import('./vendorPortal.service.js');
+  await notifyVendor(
+    vendor,
+    'Welcome — complete your vendor onboarding',
+    `Hi ${vendor.ownerName || vendor.companyName}, your account was created. Complete address, documents, and fleet details to get verified.`,
+  );
+
   return {
     token: signAccessToken({ sub: String(user._id), role: user.role, vendorId: String(vendor._id) }),
     user: toPublicUser(user),
+    vendor: { id: String(vendor._id), registrationStep: vendor.registrationStep, status: vendor.status },
   };
 };
 

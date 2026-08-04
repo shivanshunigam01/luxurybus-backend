@@ -1,4 +1,12 @@
-export const toPublicUser = (user) => ({ id: String(user._id), email: user.email, name: user.name, phone: user.phone || '', role: user.role, vendorId: user.vendorId ? String(user.vendorId) : undefined });
+export const toPublicUser = (user) => ({
+  id: String(user._id),
+  email: user.email,
+  name: user.name,
+  phone: user.phone || '',
+  role: user.role,
+  vendorId: user.vendorId ? String(user.vendorId) : undefined,
+  companyId: user.companyId ? String(user.companyId) : undefined,
+});
 export const money = (num) => Number(num || 0).toFixed(2);
 /** Matches gobus-rentals `local-api` / UI copy (sentence case). */
 export const formatInr = (num) => `₹${Number(num || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;

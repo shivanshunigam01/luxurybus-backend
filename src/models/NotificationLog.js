@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const schema = new mongoose.Schema(
   {
-    recipientType: { type: String, enum: ['customer', 'vendor', 'admin'], default: 'admin' },
+    recipientType: { type: String, enum: ['customer', 'vendor', 'admin', 'guest'], default: 'admin' },
     recipientId: { type: mongoose.Schema.Types.ObjectId, default: null },
     channel: { type: String, enum: ['sms', 'email', 'whatsapp', 'push'], default: 'email' },
     /** Legacy / generic text */

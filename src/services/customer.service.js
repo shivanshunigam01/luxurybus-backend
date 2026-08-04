@@ -150,7 +150,21 @@ export const acceptQuote = async (quoteId, userId, body = {}) => {
   const lead = await Lead.findById(quote.leadId);
   if (!lead || String(lead.customerId) !== String(userId)) throw new ApiError(403, 'Access denied for this quote');
   const settings = await Setting.findOne().sort({ createdAt: -1 }).lean();
-  const totals = gstBreakdown(quote.amount, settings);
+  let baseAmount = Number(quote.amount);
+  let discountAmount = 0;
+  let couponCode = body.couponCode || lead.couponCode || '';
+  if (couponCode) {
+    const OfferService = await import('./offer.service.js');
+    const coupon = await OfferService.validateCoupon(couponCode, {
+      target: 'customer',
+      amount: baseAmount,
+      userId,
+    });
+    discountAmount = coupon.discountAmount;
+    baseAmount = Math.max(0, baseAmount - discountAmount);
+    couponCode = coupon.code;
+  }
+  const totals = gstBreakdown(baseAmount, settings);
   const commissionRate = (settings?.vendorCommissionPercentage ?? 10) / 100;
   const commissionDeducted = totals.subtotal * commissionRate;
   const advanceRequired = paymentType === 'full' ? totals.totalWithGst : Math.round(totals.totalWithGst * ADVANCE_FRAC * 100) / 100;
@@ -165,6 +179,9 @@ export const acceptQuote = async (quoteId, userId, body = {}) => {
     quoteId: quote._id,
     customerId: userId,
     vendorId: quote.vendorId,
+    companyId: lead.companyId || null,
+    couponCode,
+    discountAmount,
     subtotal: totals.subtotal,
     gstAmount: totals.gstAmount,
     totalWithGst: totals.totalWithGst,
@@ -176,6 +193,38 @@ export const acceptQuote = async (quoteId, userId, body = {}) => {
     commissionDeducted,
     payoutAmount,
   });
+  const { appendBookingEvent, rebuildBookingSearchText } = await import('./bookingLifecycle.service.js');
+  await appendBookingEvent({
+    bookingId: booking._id,
+    type: 'status',
+    message: 'Booking created from accepted quote',
+    meta: { couponCode, discountAmount },
+    createdBy: userId,
+  });
+  await rebuildBookingSearchText(booking._id);
+  if (couponCode) {
+    const OfferService = await import('./offer.service.js');
+    await OfferService.redeemCoupon({
+      code: couponCode,
+      userId,
+      bookingId: booking._id,
+      discountAmount,
+    });
+  }
+  const { notifyChannels } = await import('./notify.service.js');
+  const user = await User.findById(userId).lean();
+  if (user) {
+    await notifyChannels({
+      userId,
+      email: user.email,
+      phone: user.phone,
+      subject: 'Booking confirmed — complete payment',
+      body: `Your booking ${bookingRef(booking._id)} is ready. Amount due: ₹${totals.totalWithGst}.`,
+      channels: ['email', 'inapp'],
+      type: 'booking',
+      href: '/customer/bookings',
+    });
+  }
   return { ok: true, bookingId: String(booking._id), bookingRef: bookingRef(booking._id) };
 };
 

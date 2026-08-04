@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
 const schema = new mongoose.Schema({
   customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  companyId: { type: mongoose.Schema.Types.ObjectId, ref: 'B2BCompany', default: null, index: true },
   guestName: { type: String, default: '' },
+  couponCode: { type: String, default: '' },
   guestEmail: { type: String, default: '' },
   guestPhone: { type: String, default: '' },
   pickup: { type: String, required: true },
