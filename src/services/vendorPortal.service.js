@@ -64,6 +64,9 @@ export const getVendorPortalProfile = async (vendorId) => {
     logoUrl: vendor.logoUrl || '',
     documentsStatus: vendor.documentsStatus || 'incomplete',
     registrationStep: vendor.registrationStep || 1,
+    documents: vendor.documents
+      ? JSON.parse(JSON.stringify(vendor.documents))
+      : {},
   };
   return {
     user: {
@@ -106,7 +109,18 @@ export const uploadVendorDocument = async (vendorId, docKey, file) => {
   }
   if (!file) throw new ApiError(400, 'File required');
   const vendor = await getVendorOrThrow(vendorId);
-  const up = await uploadBufferToCloudinary(file.buffer, `luxurybus/vendors/${vendorId}/docs`);
+  let up;
+  try {
+    up = await uploadBufferToCloudinary(
+      file.buffer,
+      `luxurybus/vendors/${vendorId}/docs`,
+      file.originalname,
+    );
+  } catch (error) {
+    throw new ApiError(500, error?.message || 'Document upload failed');
+  }
+
+  if (!vendor.documents) vendor.documents = {};
 
   if (docKey === 'vehicleImages') {
     vendor.documents.vehicleImages = vendor.documents.vehicleImages || [];
@@ -120,7 +134,7 @@ export const uploadVendorDocument = async (vendorId, docKey, file) => {
   } else {
     const prev = vendor.documents[docKey];
     if (prev?.publicId) await destroyFromCloudinary(prev.publicId).catch(() => null);
-    vendor.documents[docKey] = {
+    vendor.set(`documents.${docKey}`, {
       url: up.secure_url,
       publicId: up.public_id,
       fileName: file.originalname || '',
@@ -128,10 +142,11 @@ export const uploadVendorDocument = async (vendorId, docKey, file) => {
       uploadedAt: new Date(),
       remark: '',
       reviewedAt: null,
-    };
+    });
   }
   vendor.documentsStatus = 'pending_review';
   if (vendor.registrationStep < 3) vendor.registrationStep = 3;
+  vendor.markModified('documents');
   await vendor.save();
   return getVendorPortalProfile(vendorId);
 };
@@ -147,25 +162,6 @@ export const completeOnboarding = async (vendorId) => {
     `Hi ${vendor.ownerName || vendor.companyName}, your vendor application is under review. We typically verify within 24 hours.`,
   );
   return getVendorPortalProfile(vendorId);
-};
-
-export const listVendorNotifications = async (vendorId) => {
-  const rows = await NotificationLog.find({
-    $or: [{ recipientId: vendorId }, { audience: 'vendor' }],
-  })
-    .sort({ createdAt: -1 })
-    .limit(50)
-    .lean();
-  return {
-    items: rows.map((n) => ({
-      id: String(n._id),
-      subject: n.subject || n.message,
-      body: n.body || n.message,
-      channel: n.channel,
-      status: n.status,
-      date: n.createdAt,
-    })),
-  };
 };
 
 export const getVendorAnalytics = async (vendorId) => {
@@ -245,7 +241,7 @@ export const createVendorBus = async (vendorId, payload, files = []) => {
   if (fileList.length) {
     const uploaded = [];
     for (const file of fileList) {
-      const up = await uploadBufferToCloudinary(file.buffer, `luxurybus/buses/${vendorId}`);
+      const up = await uploadBufferToCloudinary(file.buffer, `luxurybus/buses/${vendorId}`, file.originalname);
       uploaded.push({ url: up.secure_url, publicId: up.public_id });
     }
     data.images = uploaded;
@@ -300,7 +296,7 @@ export const updateVendorBus = async (busId, vendorId, payload, files = []) => {
   const fileList = Array.isArray(files) ? files : files ? [files] : [];
   if (fileList.length) {
     for (const file of fileList) {
-      const up = await uploadBufferToCloudinary(file.buffer, `luxurybus/buses/${vendorId}`);
+      const up = await uploadBufferToCloudinary(file.buffer, `luxurybus/buses/${vendorId}`, file.originalname);
       bus.images.push({ url: up.secure_url, publicId: up.public_id });
     }
     if (!bus.imageUrl && bus.images[0]) {

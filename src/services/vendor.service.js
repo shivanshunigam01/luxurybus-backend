@@ -252,7 +252,7 @@ export const updateProfile = async (vendorId, payload, file) => {
 
   if (file) {
     if (vendor.logoPublicId) await destroyFromCloudinary(vendor.logoPublicId).catch(() => null);
-    const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/vendors');
+    const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/vendors', file.originalname);
     vendor.logoPublicId = up.public_id;
     vendor.logoUrl = up.secure_url;
   }
@@ -267,7 +267,7 @@ export const createBus = async (vendorId, payload, file) => {
   const { normalizeBusPayload } = await import('./content.service.js');
   const data = { ...(await normalizeBusPayload(payload, { allowCreate: true })), vendorId };
   if (file) {
-    const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/buses');
+    const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/buses', file.originalname);
     data.imagePublicId = up.public_id;
     data.imageUrl = up.secure_url;
   }
@@ -296,7 +296,7 @@ export const updateBus = async (busId, vendorId, payload, file) => {
   Object.assign(bus, { ...payload, ...normalized });
   if (file) {
     if (bus.imagePublicId) await destroyFromCloudinary(bus.imagePublicId).catch(() => null);
-    const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/buses');
+    const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/buses', file.originalname);
     bus.imagePublicId = up.public_id;
     bus.imageUrl = up.secure_url;
   }

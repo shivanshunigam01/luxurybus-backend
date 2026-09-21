@@ -18,10 +18,6 @@ export const completeOnboarding = asyncHandler(async (req, res) =>
   res.json(await Portal.completeOnboarding(req.user.vendorId)),
 );
 
-export const notifications = asyncHandler(async (req, res) =>
-  res.json(await Portal.listVendorNotifications(req.user.vendorId)),
-);
-
 export const analytics = asyncHandler(async (req, res) =>
   res.json(await Portal.getVendorAnalytics(req.user.vendorId)),
 );

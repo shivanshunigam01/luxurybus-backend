@@ -33,7 +33,6 @@ router.post(
   PortalController.uploadDocument,
 );
 router.post("/onboarding/complete", PortalController.completeOnboarding);
-router.get("/notifications", PortalController.notifications);
 router.get("/analytics", PortalController.analytics);
 router.get("/wallet", PortalController.wallet);
 router.get("/payments", PortalController.wallet);

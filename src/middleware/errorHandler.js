@@ -5,6 +5,12 @@ export const notFoundHandler = (req, res) =>
   res.status(404).json({ error: `Route not found: ${req.method} ${req.originalUrl}` });
 
 export const errorHandler = (err, req, res, _next) => {
+  if (err?.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ error: 'File too large. Maximum size is 10MB.' });
+  }
+  if (err?.message === 'Only images (JPG, PNG, WEBP) and PDF files are allowed') {
+    return res.status(400).json({ error: err.message });
+  }
   const status = err.statusCode || err.status || 500;
   if (status >= 500) {
     logger.error('request_error', {

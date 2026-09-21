@@ -15,6 +15,7 @@ const schema = z.object({
   CLOUDINARY_CLOUD_NAME: z.string().default(''),
   CLOUDINARY_API_KEY: z.string().default(''),
   CLOUDINARY_API_SECRET: z.string().default(''),
+  API_PUBLIC_URL: z.string().default(''),
   SMTP_HOST: z.string().default(''),
   SMTP_PORT: z.coerce.number().default(587),
   SMTP_SECURE: z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : false), z.boolean()).default(false),

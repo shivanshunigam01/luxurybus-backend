@@ -1,3 +1,4 @@
+import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -46,6 +47,7 @@ app.use(
   }),
 );
 app.use('/api', apiLimiter);
+app.use('/uploads', express.static(path.resolve(process.cwd(), 'uploads')));
 
 app.get('/health', (_req, res) =>
   res.json({ ok: true, service: 'luxurybus-backend', env: env.NODE_ENV, ts: new Date().toISOString() }),
