@@ -27,6 +27,18 @@ export const isCloudinaryConfigured = () =>
       env.CLOUDINARY_API_SECRET.length > 8,
   );
 
+const cloudinaryFolder = (folder) => {
+  const root = String(env.CLOUDINARY_FOLDER || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9/_-]/g, '')
+    .replace(/^\/+|\/+$/g, '');
+  const rest = String(folder || '')
+    .replace(/[^a-zA-Z0-9/_-]/g, '')
+    .replace(/^\/+|\/+$/g, '');
+  if (root && rest && rest !== root && !rest.startsWith(`${root}/`)) return `${root}/${rest}`;
+  return rest || root || 'uploads';
+};
+
 if (isCloudinaryConfigured()) {
   cloudinary.config({
     cloud_name: env.CLOUDINARY_CLOUD_NAME,
@@ -58,7 +70,7 @@ const saveLocal = async (buffer, folder, originalName = 'file') => {
 const uploadToCloudinary = (buffer, folder) =>
   new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: 'auto' },
+      { folder: cloudinaryFolder(folder), resource_type: 'auto' },
       (error, result) => (error ? reject(error) : resolve(result)),
     );
     streamifier.createReadStream(buffer).pipe(stream);
