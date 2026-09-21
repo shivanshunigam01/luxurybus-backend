@@ -5,6 +5,8 @@ import { comparePassword, hashPassword } from '../utils/password.js';
 import { signAccessToken } from '../utils/jwt.js';
 import { toPublicUser } from '../utils/formatters.js';
 import { verifyGoogleIdToken } from '../integrations/googleOAuth.js';
+import { linkGuestLeadsToUser } from './leadLink.service.js';
+
 const assertAllowed = (user) => {
   if (user.blocked) throw new ApiError(403, 'User is blocked');
 };
@@ -18,6 +20,7 @@ export const registerCustomer = async ({ email, password, name, phone }) => {
     phone,
     role: 'customer',
   });
+  await linkGuestLeadsToUser(user._id, { email: user.email, phone: user.phone });
   return {
     token: signAccessToken({ sub: String(user._id), role: user.role, vendorId: null }),
     user: toPublicUser(user),
@@ -30,6 +33,9 @@ export const loginUser = async ({ email, password }) => {
     throw new ApiError(401, 'Invalid credentials');
   }
   assertAllowed(user);
+  if (user.role === 'customer') {
+    await linkGuestLeadsToUser(user._id, { email: user.email, phone: user.phone });
+  }
   return {
     token: signAccessToken({
       sub: String(user._id),
@@ -117,6 +123,9 @@ export const googleLogin = async ({ idToken }) => {
     await user.save();
   }
   assertAllowed(user);
+  if (user.role === 'customer') {
+    await linkGuestLeadsToUser(user._id, { email: user.email, phone: user.phone });
+  }
   return {
     token: signAccessToken({ sub: String(user._id), role: user.role, vendorId: user.vendorId ? String(user.vendorId) : null }),
     user: toPublicUser(user),

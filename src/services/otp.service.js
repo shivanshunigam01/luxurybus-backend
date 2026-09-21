@@ -59,6 +59,9 @@ export const sendOtp = async ({ channel, target, purpose = 'vendor_register' }) 
   if (env.NODE_ENV !== 'production' && !delivery.sent) {
     payload.devCode = code;
   }
+  if (env.NODE_ENV === 'production') {
+    delete payload.devCode;
+  }
   return payload;
 };
 

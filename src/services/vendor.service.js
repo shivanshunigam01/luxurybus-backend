@@ -112,10 +112,14 @@ export const getVendorQuotes = async (vendorId) => {
 };
 
 export const createQuote = async (payload, vendorId) => {
+  const vendorRecord = await getVendorOrThrow(vendorId);
+  if (vendorRecord.status !== 'active') {
+    throw new ApiError(403, 'Your vendor account must be approved before you can submit quotes.');
+  }
   const lead = await Lead.findById(payload.leadId);
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (await Quote.findOne({ leadId: payload.leadId, vendorId })) throw new ApiError(409, 'Quote already submitted for this lead');
-  const vendor = await Vendor.findById(vendorId).lean();
+  const vendor = vendorRecord.toObject ? vendorRecord.toObject() : vendorRecord;
   const responseMinutes = Math.floor((Date.now() - new Date(lead.createdAt).getTime()) / 60000);
   const quote = await Quote.create({
     leadId: payload.leadId,

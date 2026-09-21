@@ -1,6 +1,7 @@
 import { Lead } from '../models/Lead.js';
 import { Vendor } from '../models/Vendor.js';
 import { User } from '../models/User.js';
+import { linkGuestLeadsToUser } from './leadLink.service.js';
 import { NotificationLog } from '../models/NotificationLog.js';
 import { sendEmail } from '../integrations/mailer.js';
 import { env } from '../config/env.js';
@@ -61,7 +62,21 @@ const logEmail = (recipientType, recipientId, subject, body, status) =>
   });
 
 export const createLead = async (payload, authUser = null) => {
-  const lead = await Lead.create({ customerId: authUser?.sub || null, ...payload });
+  let customerId = authUser?.sub || null;
+  if (!customerId && payload.guestEmail) {
+    const existing = await User.findOne({
+      email: String(payload.guestEmail).toLowerCase().trim(),
+      role: 'customer',
+    }).select('_id');
+    if (existing) customerId = existing._id;
+  }
+  const lead = await Lead.create({ customerId, ...payload });
+  if (customerId && !authUser?.sub) {
+    await linkGuestLeadsToUser(customerId, {
+      email: payload.guestEmail,
+      phone: payload.guestPhone,
+    });
+  }
   const vendors = await Vendor.find({
     status: 'active',
     $or: [{ city: new RegExp(payload.pickup, 'i') }, { operatingCities: new RegExp(payload.pickup, 'i') }],
