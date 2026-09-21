@@ -50,12 +50,33 @@ export const getVendorPortalProfile = async (vendorId) => {
   const vendor = await Vendor.findById(vendorId).lean();
   if (!vendor) throw new ApiError(404, 'Vendor not found');
   const user = await User.findById(vendor.userId).select('email name phone').lean();
-  return {
-    ...vendor,
+  const vendorDoc = {
     id: String(vendor._id),
+    companyName: vendor.companyName || '',
+    address: vendor.address || '',
+    gstNumber: vendor.gstNumber || '',
+    panNumber: vendor.panNumber || '',
+    status: vendor.status || 'pending',
+    operatingCities: vendor.operatingCities || '',
+    city: vendor.city || '',
+    state: vendor.state || '',
+    pin: vendor.pin || '',
+    logoUrl: vendor.logoUrl || '',
+    documentsStatus: vendor.documentsStatus || 'incomplete',
+    registrationStep: vendor.registrationStep || 1,
+  };
+  return {
+    user: {
+      name: user?.name || vendor.ownerName || '',
+      email: user?.email || '',
+      phone: user?.phone || '',
+    },
+    vendor: vendorDoc,
+    // Keep flat aliases for older clients
+    ...vendorDoc,
+    contactName: user?.name || vendor.ownerName || '',
     email: user?.email || '',
     phone: user?.phone || '',
-    contactName: user?.name || vendor.ownerName || '',
   };
 };
 
@@ -202,7 +223,7 @@ export const getVendorWallet = async (vendorId) => {
 };
 
 export const createVendorBus = async (vendorId, payload, files = []) => {
-  const data = await normalizeBusPayload(payload);
+  const data = await normalizeBusPayload(payload, { allowCreate: true });
   data.vendorId = vendorId;
   data.name = payload.name || data.busType;
   data.model = payload.model || '';
@@ -242,16 +263,21 @@ export const createVendorBus = async (vendorId, payload, files = []) => {
 export const updateVendorBus = async (busId, vendorId, payload, files = []) => {
   const bus = await Bus.findOne({ _id: busId, vendorId });
   if (!bus) throw new ApiError(404, 'Fleet vehicle not found');
-  const normalized = await normalizeBusPayload({
-    busType: payload.busType ?? bus.busType,
-    vehicleTypeSlug: payload.vehicleTypeSlug ?? bus.vehicleTypeSlug,
-    seats: payload.seats ?? bus.seats,
-    ac: payload.ac ?? bus.ac,
-    pricingPerKm: payload.pricingPerKm ?? bus.pricingPerKm,
-    pricingPerDay: payload.pricingPerDay ?? bus.pricingPerDay,
-    availability: payload.availability ?? bus.availability,
-    registrationNumber: payload.registrationNumber ?? bus.registrationNumber,
-  });
+  const normalized = await normalizeBusPayload(
+    {
+      busType: payload.busType ?? bus.busType,
+      vehicleTypeSlug: payload.vehicleTypeSlug ?? bus.vehicleTypeSlug,
+      customTypeName: payload.customTypeName,
+      category: payload.category,
+      seats: payload.seats ?? bus.seats,
+      ac: payload.ac ?? bus.ac,
+      pricingPerKm: payload.pricingPerKm ?? bus.pricingPerKm,
+      pricingPerDay: payload.pricingPerDay ?? bus.pricingPerDay,
+      availability: payload.availability ?? bus.availability,
+      registrationNumber: payload.registrationNumber ?? bus.registrationNumber,
+    },
+    { allowCreate: true },
+  );
   Object.assign(bus, normalized);
   if (payload.name != null) bus.name = payload.name;
   if (payload.model != null) bus.model = payload.model;

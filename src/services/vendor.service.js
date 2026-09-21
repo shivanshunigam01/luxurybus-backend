@@ -36,14 +36,25 @@ const logQuoteEmail = (recipientId, subject, body, status) =>
 export const getVendorLeads = async (vendorId) => {
   const vendor = await getVendorOrThrow(vendorId);
   const vid = new mongoose.Types.ObjectId(String(vendorId));
-  const cityPat = vendor.city ? new RegExp(vendor.city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : /.*/;
-  const citiesPat = vendor.operatingCities
-    ? new RegExp(vendor.operatingCities.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
-    : /.*/;
+  const cityTokens = [
+    vendor.city,
+    ...(String(vendor.operatingCities || '')
+      .split(/[,|/]/)
+      .map((s) => s.trim())
+      .filter(Boolean)),
+  ].filter(Boolean);
+
+  const pickupClauses =
+    cityTokens.length > 0
+      ? cityTokens.map((token) => ({
+          pickup: new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+        }))
+      : [{ pickup: /.*/ }];
+
   const leads = await Lead.find({
     acceptedQuoteId: null,
     rejectedByVendorIds: { $nin: [vid] },
-    $or: [{ pickup: cityPat }, { pickup: citiesPat }],
+    $or: pickupClauses,
   })
     .sort({ createdAt: -1 })
     .limit(100)
@@ -203,7 +214,38 @@ export const getProfile = async (vendorId) => getVendorOrThrow(vendorId);
 
 export const updateProfile = async (vendorId, payload, file) => {
   const vendor = await getVendorOrThrow(vendorId);
-  Object.assign(vendor, payload);
+  const allowed = [
+    'companyName',
+    'address',
+    'operatingCities',
+    'city',
+    'state',
+    'pin',
+    'gstNumber',
+    'panNumber',
+    'bankHolder',
+    'bankAccount',
+    'bankIfsc',
+    'bankName',
+    'ownerName',
+  ];
+  for (const key of allowed) {
+    if (payload[key] !== undefined && payload[key] !== null) {
+      vendor[key] = payload[key];
+    }
+  }
+
+  // Contact fields live on User — never allow status / wallet / documentsStatus from vendor body
+  if (payload.name || payload.phone || payload.contactName) {
+    const User = (await import('../models/User.js')).default;
+    const userPatch = {};
+    if (payload.name || payload.contactName) userPatch.name = payload.name || payload.contactName;
+    if (payload.phone) userPatch.phone = payload.phone;
+    if (Object.keys(userPatch).length) {
+      await User.findByIdAndUpdate(vendor.userId, { $set: userPatch });
+    }
+  }
+
   if (file) {
     if (vendor.logoPublicId) await destroyFromCloudinary(vendor.logoPublicId).catch(() => null);
     const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/vendors');
@@ -211,14 +253,15 @@ export const updateProfile = async (vendorId, payload, file) => {
     vendor.logoUrl = up.secure_url;
   }
   await vendor.save();
-  return vendor;
+  const { getVendorPortalProfile } = await import('./vendorPortal.service.js');
+  return getVendorPortalProfile(vendorId);
 };
 
 export const listBuses = async (vendorId) => Bus.find({ vendorId }).sort({ createdAt: -1 });
 
 export const createBus = async (vendorId, payload, file) => {
   const { normalizeBusPayload } = await import('./content.service.js');
-  const data = { ...(await normalizeBusPayload(payload)), vendorId };
+  const data = { ...(await normalizeBusPayload(payload, { allowCreate: true })), vendorId };
   if (file) {
     const up = await uploadBufferToCloudinary(file.buffer, 'luxurybus/buses');
     data.imagePublicId = up.public_id;
@@ -231,16 +274,21 @@ export const updateBus = async (busId, vendorId, payload, file) => {
   const { normalizeBusPayload } = await import('./content.service.js');
   const bus = await Bus.findOne({ _id: busId, vendorId });
   if (!bus) throw new ApiError(404, 'Bus not found');
-  const normalized = await normalizeBusPayload({
-    busType: payload.busType ?? bus.busType,
-    vehicleTypeSlug: payload.vehicleTypeSlug ?? bus.vehicleTypeSlug,
-    seats: payload.seats ?? bus.seats,
-    ac: payload.ac ?? bus.ac,
-    pricingPerKm: payload.pricingPerKm ?? bus.pricingPerKm,
-    pricingPerDay: payload.pricingPerDay ?? bus.pricingPerDay,
-    availability: payload.availability ?? bus.availability,
-    registrationNumber: payload.registrationNumber ?? bus.registrationNumber,
-  });
+  const normalized = await normalizeBusPayload(
+    {
+      busType: payload.busType ?? bus.busType,
+      vehicleTypeSlug: payload.vehicleTypeSlug ?? bus.vehicleTypeSlug,
+      customTypeName: payload.customTypeName,
+      category: payload.category,
+      seats: payload.seats ?? bus.seats,
+      ac: payload.ac ?? bus.ac,
+      pricingPerKm: payload.pricingPerKm ?? bus.pricingPerKm,
+      pricingPerDay: payload.pricingPerDay ?? bus.pricingPerDay,
+      availability: payload.availability ?? bus.availability,
+      registrationNumber: payload.registrationNumber ?? bus.registrationNumber,
+    },
+    { allowCreate: true },
+  );
   Object.assign(bus, { ...payload, ...normalized });
   if (file) {
     if (bus.imagePublicId) await destroyFromCloudinary(bus.imagePublicId).catch(() => null);

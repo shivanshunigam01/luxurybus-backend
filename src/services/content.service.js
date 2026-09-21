@@ -9,7 +9,7 @@ import { Bus } from '../models/Bus.js';
 import { ApiError } from '../utils/ApiError.js';
 import { slugify, estimateReadTime } from '../utils/slugify.js';
 import { uploadBufferToCloudinary, destroyFromCloudinary } from '../integrations/cloudinary.js';
-import { VEHICLE_TYPE_SEED } from '../constants/vehicleTypes.js';
+import { VEHICLE_TYPE_SEED, VEHICLE_CATEGORIES } from '../constants/vehicleTypes.js';
 
 const parseMaybeJson = (value, fallback) => {
   if (value == null || value === '') return fallback;
@@ -68,6 +68,19 @@ export const listVehicleTypesAdmin = async () =>
   VehicleType.find().sort({ sortOrder: 1, name: 1 });
 
 export const listVehicleTypesPublic = async (query = {}) => {
+  const slugs = new Set(await VehicleType.distinct('slug'));
+  const missing = VEHICLE_TYPE_SEED.filter((v) => !slugs.has(v.slug));
+  if (missing.length) {
+    await VehicleType.bulkWrite(
+      missing.map((v) => ({
+        updateOne: {
+          filter: { slug: v.slug },
+          update: { $setOnInsert: { ...v, status: 'active' } },
+          upsert: true,
+        },
+      })),
+    );
+  }
   const filter = { status: 'active' };
   if (query.category) filter.category = query.category;
   if (query.featured === 'true' || query.featured === true) filter.featured = true;
@@ -111,11 +124,20 @@ export const deleteVehicleType = async (id) => {
   return { ok: true };
 };
 
-export const resolveVehicleType = async (slugOrName) => {
+const titleFromSlug = (text = '') =>
+  String(text)
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
+export const resolveVehicleType = async (slugOrName, { allowCreate = false, category } = {}) => {
   if (!slugOrName) return null;
   const slug = slugify(slugOrName);
+  if (!slug) return null;
+  const escaped = String(slugOrName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   let vt = await VehicleType.findOne({
-    $or: [{ slug }, { name: new RegExp(`^${slugOrName}$`, 'i') }],
+    $or: [{ slug }, { name: new RegExp(`^${escaped}$`, 'i') }],
   });
   if (vt) return vt;
   const seed = VEHICLE_TYPE_SEED.find(
@@ -127,21 +149,42 @@ export const resolveVehicleType = async (slugOrName) => {
       { ...seed, status: 'active' },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
+    return vt;
   }
-  return vt;
+  if (!allowCreate) return null;
+  const safeCategory = VEHICLE_CATEGORIES.includes(category) ? category : 'bus';
+  return VehicleType.findOneAndUpdate(
+    { slug },
+    {
+      slug,
+      name: titleFromSlug(slugOrName),
+      category: safeCategory,
+      status: 'active',
+      featured: false,
+      sortOrder: 900,
+      description: `${titleFromSlug(slugOrName)} added by a vendor for fleet listings.`,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
 };
 
-export const normalizeBusPayload = async (payload) => {
+export const normalizeBusPayload = async (payload, { allowCreate = false } = {}) => {
   const data = { ...payload };
   if (typeof data.ac === 'string') data.ac = data.ac === 'true' || data.ac === '1';
   ['pricingPerKm', 'pricingPerDay', 'seats'].forEach((k) => {
     if (data[k] != null) data[k] = Number(data[k]);
   });
-  const key = data.vehicleTypeSlug || data.busType;
-  const vt = await resolveVehicleType(key);
-  if (!vt) throw new ApiError(400, 'Invalid vehicle type. Choose a type from the catalog.');
+  const customName = typeof data.customTypeName === 'string' ? data.customTypeName.trim() : '';
+  const key = customName || data.vehicleTypeSlug || data.busType;
+  const vt = await resolveVehicleType(key, {
+    allowCreate: allowCreate || Boolean(customName),
+    category: data.category,
+  });
+  if (!vt) throw new ApiError(400, 'Invalid vehicle type. Choose a type from the catalog or add a custom type name.');
   data.vehicleTypeSlug = vt.slug;
   data.busType = vt.name;
+  delete data.customTypeName;
+  delete data.category;
   return data;
 };
 

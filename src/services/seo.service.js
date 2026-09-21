@@ -393,7 +393,7 @@ export const expandSitemapUrls = async () => {
     });
   };
 
-  ['/', '/book', '/about', '/contact', '/blog', '/services', '/corporate', '/industries', '/bus-types-for-hire', '/sitemap'].forEach(
+  ['/', '/book', '/about', '/contact', '/blog', '/services', '/corporate', '/industries', '/bus-types-for-hire', '/bus-rental', '/bus-rental-guides'].forEach(
     (p) => push(p, 'weekly', p === '/' ? 1 : 0.8),
   );
 
@@ -408,8 +408,9 @@ export const expandSitemapUrls = async () => {
     push(path, m?.changefreq, m?.priority ?? 0.8);
   });
 
-  const services = await ServicePage.find({ status: 'published' }).select('slug category canonicalPath').lean();
+  const services = await ServicePage.find({ status: 'published' }).select('slug category canonicalPath robots').lean();
   services.forEach((p) => {
+    if (String(p.robots || '').includes('noindex')) return;
     const hub = p.category === 'corporate' ? 'corporate' : p.category === 'industry' ? 'industries' : 'services';
     const path = p.canonicalPath || `/${hub}/${p.slug}`;
     const m = metaMap.get(path);
@@ -417,21 +418,49 @@ export const expandSitemapUrls = async () => {
     push(path, m?.changefreq, m?.priority ?? 0.75);
   });
 
-  const blogs = await BlogPost.find({ status: 'published' }).select('slug canonicalPath').lean();
-  blogs.forEach((b) => push(b.canonicalPath || `/blog/${b.slug}`, 'monthly', 0.6));
+  const blogs = await BlogPost.find({ status: 'published' }).select('slug canonicalPath robots').lean();
+  blogs.forEach((b) => {
+    if (String(b.robots || '').includes('noindex')) return;
+    const path = b.canonicalPath || `/blog/${b.slug}`;
+    const m = metaMap.get(path);
+    if (m?.indexStatus === 'noindex' || m?.indexStatus === 'blocked') return;
+    push(path, 'monthly', 0.6);
+  });
 
   const prog = await ProgrammaticSeoPage.find({ status: 'published' }).select('canonicalPath').lean();
   prog.forEach((p) => {
     const m = metaMap.get(p.canonicalPath);
     if (m?.indexStatus === 'noindex' || m?.indexStatus === 'blocked') return;
-    push(p.canonicalPath, m?.changefreq, m?.priority ?? 0.65);
+    // Prefer noindex thin programmatic until unique SSR content is verified
+    if (!p.canonicalPath || p.canonicalPath.length < 8) return;
+    push(p.canonicalPath, m?.changefreq, m?.priority ?? 0.55);
   });
 
-  const vehicles = await VehicleType.find({ status: 'active' }).select('slug').lean();
-  vehicles.forEach((v) => push(`/${v.slug}-rental`, 'weekly', 0.7));
+  // Map vehicle types only to known national landing patterns that exist as /{slug}
+  // Do NOT emit soft-404 `/{vehicleType.slug}-rental` URLs (e.g. /volvo-buses-rental).
+  const knownBusTypePages = new Set([
+    'mini-bus-rental',
+    'tempo-traveller-rental',
+    'luxury-bus-rental',
+    'large-coach-rental',
+    'volvo-bus-rental',
+    'mercedes-coach-rental',
+    'bharatbenz-bus-rental',
+    'bus-with-washroom-rental',
+    'toyota-minibus-rental',
+    'isuzu-bus-rental',
+    'mitsubishi-bus-rental',
+    'motorhome-rental',
+    'urbania-rental',
+    'innova-crysta-rental',
+    'employee-shuttle-rental',
+    'sedan-rental',
+    'suv-rental',
+  ]);
+  knownBusTypePages.forEach((slug) => push(`/${slug}`, 'weekly', 0.7));
 
-  const content = await ContentPage.find({ status: 'published' }).select('path').lean();
-  content.forEach((c) => push(c.path, 'weekly', 0.7));
+  // ContentPage paths like /airports/, /lp/ often have no frontend route — skip to avoid soft 404s
+  // (re-enable when matching public routes exist)
 
   const dedup = new Map();
   urls.forEach((u) => dedup.set(u.path, u));

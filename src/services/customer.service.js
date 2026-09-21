@@ -5,6 +5,8 @@ import { Lead } from '../models/Lead.js';
 import { User } from '../models/User.js';
 import { Vendor } from '../models/Vendor.js';
 import { Setting } from '../models/Setting.js';
+import { Invoice } from '../models/Invoice.js';
+import { Payment } from '../models/Payment.js';
 import { ApiError } from '../utils/ApiError.js';
 import { formatInr, displayStatusFromRaw, paymentLabelFromBooking } from '../utils/formatters.js';
 
@@ -49,12 +51,22 @@ export const getBookings = async (userId) => {
     Booking.find({ customerId: userId }).sort({ createdAt: -1 }).populate('leadId').populate('vendorId', 'companyName').lean(),
     Lead.find({ customerId: userId, acceptedQuoteId: null }).sort({ createdAt: -1 }).lean(),
   ]);
+  const bookingIds = rows.map((b) => b._id);
+  const invoices = bookingIds.length
+    ? await Invoice.find({ bookingId: { $in: bookingIds } }).lean()
+    : [];
+  const invoiceByBooking = new Map(invoices.map((inv) => [String(inv.bookingId), inv]));
+
   const bookingRows = rows.map((b) => {
     const lead = b.leadId || {};
     const vendor = b.vendorId || {};
     const bal = Math.max(0, Number(b.totalWithGst) - Number(b.amountPaid || 0));
+    const invoice = invoiceByBooking.get(String(b._id));
     return {
       id: String(b._id),
+      bookingRef: bookingRef(b._id),
+      invoiceId: invoice ? String(invoice._id) : null,
+      invoiceNumber: invoice?.number || null,
       from: lead.pickup || '',
       to: lead.drop || '',
       date: lead.journeyDate ? new Date(lead.journeyDate).toLocaleDateString('en-IN') : '—',
@@ -100,6 +112,67 @@ export const getBookings = async (userId) => {
   return {
     bookings: merged.map(({ createdAt, ...row }) => row),
   };
+};
+
+const applyPaymentToBooking = async (booking, amount, purpose, userId) => {
+  if (amount <= 0) throw new ApiError(400, 'No payable amount for this purpose');
+  const prev = booking.rawStatus;
+  booking.amountPaid = Math.round((Number(booking.amountPaid || 0) + amount) * 100) / 100;
+  if (booking.amountPaid >= booking.advanceRequired && booking.rawStatus === 'pending_payment') {
+    booking.rawStatus = 'confirmed';
+  }
+  if (booking.amountPaid >= booking.totalWithGst - 0.01 && booking.rawStatus === 'pending_payment') {
+    booking.rawStatus = 'confirmed';
+  }
+  booking.displayStatus = displayStatusFromRaw(booking.rawStatus);
+  await booking.save();
+
+  await Payment.create({
+    bookingId: booking._id,
+    razorpayOrderId: `manual-${booking._id}-${Date.now()}-${purpose}`,
+    amountPaise: Math.round(amount * 100),
+    currency: 'INR',
+    purpose,
+    status: 'paid',
+    raw: { source: 'manual', recordedAt: new Date().toISOString() },
+  });
+
+  const { appendBookingEvent, ensureInvoiceForBooking, rebuildBookingSearchText } = await import(
+    './bookingLifecycle.service.js'
+  );
+  await appendBookingEvent({
+    bookingId: booking._id,
+    type: 'payment',
+    message: `Payment of ${formatInr(amount)} recorded (${purpose})`,
+    meta: { amount, purpose },
+    createdBy: userId,
+  });
+  if (prev !== booking.rawStatus) {
+    await appendBookingEvent({
+      bookingId: booking._id,
+      type: 'status',
+      message: `Status changed from ${prev} to ${booking.rawStatus}`,
+      meta: { from: prev, to: booking.rawStatus },
+      createdBy: userId,
+    });
+    await ensureInvoiceForBooking(booking._id);
+  }
+  await rebuildBookingSearchText(booking._id);
+  return booking;
+};
+
+export const recordBookingPayment = async (bookingId, userId, purpose) => {
+  const booking = await ensureBookingOwner(bookingId, userId);
+  if (booking.rawStatus === 'cancelled') throw new ApiError(400, 'Cancelled booking cannot be paid');
+  const remaining = Math.max(0, Number(booking.totalWithGst) - Number(booking.amountPaid || 0));
+  let amount = 0;
+  if (purpose === 'full') amount = remaining;
+  else if (purpose === 'advance') amount = Math.max(0, Number(booking.advanceRequired) - Number(booking.amountPaid || 0));
+  else if (purpose === 'balance') amount = remaining;
+  else throw new ApiError(400, 'Invalid payment purpose');
+  if (amount <= 0) throw new ApiError(400, 'No payment pending');
+  await applyPaymentToBooking(booking, amount, purpose, userId);
+  return { ok: true, bookingId: String(booking._id), bookingRef: bookingRef(booking._id) };
 };
 
 export const cancelBooking = async (bookingId, userId) => {
