@@ -490,17 +490,17 @@ export const sendNotification = async (payload) => {
 
   let recipients = [];
   if (audience === 'customers' || audience === 'all') {
-    recipients = recipients.concat(await User.find({ role: 'customer', blocked: { $ne: true } }).select('email phone _id').lean());
+    recipients = recipients.concat(await User.find({ role: 'customer', blocked: { $ne: true } }).select('email phone _id role').lean());
   }
   if (audience === 'vendors' || audience === 'all') {
-    const vendorUsers = await User.find({ role: 'vendor', blocked: { $ne: true } }).select('email phone _id').lean();
+    const vendorUsers = await User.find({ role: 'vendor', blocked: { $ne: true } }).select('email phone _id role').lean();
     recipients = recipients.concat(vendorUsers);
   }
   if (audience === 'b2b') {
-    recipients = recipients.concat(await User.find({ role: 'b2b', blocked: { $ne: true } }).select('email phone _id').lean());
+    recipients = recipients.concat(await User.find({ role: 'b2b', blocked: { $ne: true } }).select('email phone _id role').lean());
   }
   if (payload.to) {
-    recipients = [{ email: payload.to, phone: payload.phone || '', _id: payload.userId || null }];
+    recipients = [{ email: payload.to, phone: payload.phone || '', _id: payload.userId || null, role: payload.role || '' }];
   }
 
   let sent = 0;
@@ -508,7 +508,8 @@ export const sendNotification = async (payload) => {
     if (!r.email) continue;
     const result = await sendEmail({ to: r.email, subject, text: body });
     if (result.sent) sent += 1;
-    if (r._id) {
+    // Vendors must not receive in-app notifications (they can expose customer booking details).
+    if (r._id && r.role !== 'vendor') {
       await notifyChannels({
         userId: r._id,
         email: '',

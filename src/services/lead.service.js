@@ -97,9 +97,9 @@ export const createLead = async (payload, authUser = null) => {
     vendorRecipients.map(async (vendor) => {
       try {
         const result = await sendEmail({ to: vendor.email, subject: vendorSubject, text: vendorBody, html: vendorHtml });
-        await logEmail('vendor', vendor._id, vendorSubject, vendorBody, result.sent ? 'sent' : 'failed');
+        await logEmail('admin', vendor._id, vendorSubject, vendorBody, result.sent ? 'sent' : 'failed');
       } catch {
-        await logEmail('vendor', vendor._id, vendorSubject, vendorBody, 'failed');
+        await logEmail('admin', vendor._id, vendorSubject, vendorBody, 'failed');
       }
     }),
   );

@@ -8,6 +8,9 @@ export const errorHandler = (err, req, res, _next) => {
   if (err?.code === 'LIMIT_FILE_SIZE') {
     return res.status(400).json({ error: 'File too large. Maximum size is 10MB.' });
   }
+  if (err?.name === 'MulterError') {
+    return res.status(400).json({ error: err.message || 'File upload failed' });
+  }
   if (err?.message === 'Only images (JPG, PNG, WEBP) and PDF files are allowed') {
     return res.status(400).json({ error: err.message });
   }

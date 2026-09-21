@@ -107,7 +107,7 @@ export const uploadVendorDocument = async (vendorId, docKey, file) => {
   if (!DOC_KEYS.includes(docKey) && docKey !== 'vehicleImages') {
     throw new ApiError(400, 'Invalid document type');
   }
-  if (!file) throw new ApiError(400, 'File required');
+  if (!file?.buffer?.length) throw new ApiError(400, 'File required');
   const vendor = await getVendorOrThrow(vendorId);
   let up;
   try {
@@ -119,35 +119,31 @@ export const uploadVendorDocument = async (vendorId, docKey, file) => {
   } catch (error) {
     throw new ApiError(500, error?.message || 'Document upload failed');
   }
+  if (!up?.secure_url) throw new ApiError(500, 'Document upload failed');
 
-  if (!vendor.documents) vendor.documents = {};
+  const docPayload = {
+    url: up.secure_url,
+    publicId: up.public_id || '',
+    fileName: file.originalname || 'document',
+    status: 'pending',
+    uploadedAt: new Date(),
+    remark: '',
+    reviewedAt: null,
+  };
+  const $set = { documentsStatus: 'pending_review' };
+  if ((vendor.registrationStep || 1) < 3) $set.registrationStep = 3;
 
   if (docKey === 'vehicleImages') {
-    vendor.documents.vehicleImages = vendor.documents.vehicleImages || [];
-    vendor.documents.vehicleImages.push({
-      url: up.secure_url,
-      publicId: up.public_id,
-      fileName: file.originalname || '',
-      status: 'pending',
-      uploadedAt: new Date(),
-    });
+    await Vendor.updateOne(
+      { _id: vendorId },
+      { $set, $push: { 'documents.vehicleImages': docPayload } },
+    );
   } else {
-    const prev = vendor.documents[docKey];
+    const prev = vendor.documents?.[docKey];
     if (prev?.publicId) await destroyFromCloudinary(prev.publicId).catch(() => null);
-    vendor.set(`documents.${docKey}`, {
-      url: up.secure_url,
-      publicId: up.public_id,
-      fileName: file.originalname || '',
-      status: 'pending',
-      uploadedAt: new Date(),
-      remark: '',
-      reviewedAt: null,
-    });
+    $set[`documents.${docKey}`] = docPayload;
+    await Vendor.updateOne({ _id: vendorId }, { $set });
   }
-  vendor.documentsStatus = 'pending_review';
-  if (vendor.registrationStep < 3) vendor.registrationStep = 3;
-  vendor.markModified('documents');
-  await vendor.save();
   return getVendorPortalProfile(vendorId);
 };
 

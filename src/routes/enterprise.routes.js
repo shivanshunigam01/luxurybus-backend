@@ -26,9 +26,9 @@ router.post('/maps/fare-estimate', validate(fareSchema), Ent.estimateFare);
 
 router.use(requireAuth);
 
-router.get('/notifications', Ent.myNotifications);
-router.post('/notifications/read-all', Ent.readAllNotifications);
-router.post('/notifications/:id/read', validate(idParamSchema), Ent.readNotification);
+router.get('/notifications', requireRole('customer', 'b2b', 'admin'), Ent.myNotifications);
+router.post('/notifications/read-all', requireRole('customer', 'b2b', 'admin'), Ent.readAllNotifications);
+router.post('/notifications/:id/read', requireRole('customer', 'b2b', 'admin'), validate(idParamSchema), Ent.readNotification);
 
 router.get('/wishlist', requireRole('customer', 'b2b'), Ent.wishlist);
 router.post('/wishlist', requireRole('customer', 'b2b'), Ent.addWishlist);

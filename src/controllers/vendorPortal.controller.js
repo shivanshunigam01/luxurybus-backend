@@ -1,4 +1,5 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { ApiError } from '../utils/ApiError.js';
 import * as Portal from '../services/vendorPortal.service.js';
 import * as VendorService from '../services/vendor.service.js';
 
@@ -10,9 +11,10 @@ export const updateAddress = asyncHandler(async (req, res) =>
   res.json(await Portal.updateOnboardingAddress(req.user.vendorId, req.body)),
 );
 
-export const uploadDocument = asyncHandler(async (req, res) =>
-  res.json(await Portal.uploadVendorDocument(req.user.vendorId, req.params.docKey, req.file)),
-);
+export const uploadDocument = asyncHandler(async (req, res) => {
+  if (!req.user?.vendorId) throw new ApiError(400, 'Vendor profile is incomplete. Please log in again.');
+  res.json(await Portal.uploadVendorDocument(req.user.vendorId, req.params.docKey, req.file));
+});
 
 export const completeOnboarding = asyncHandler(async (req, res) =>
   res.json(await Portal.completeOnboarding(req.user.vendorId)),
